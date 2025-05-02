@@ -3779,6 +3779,30 @@ export const filterEffect: {
     }
   ))
 
+type TransformationAnnotations<A, T, E> =
+  | Annotations.Schema<A>
+  | readonly [
+    type: Annotations.Schema<A> | undefined,
+    transformation?: (Annotations.Schema<T> | undefined),
+    encoded?: Annotations.Schema<E>
+  ]
+
+const getTransformationAnnotations = <A, T, E>(
+  annotations: TransformationAnnotations<A, T, E> | undefined
+): [
+  type?: Annotations.Schema<A>,
+  transformation?: Annotations.Schema<T>,
+  encoded?: Annotations.Schema<E>
+] => {
+  if (annotations === undefined) {
+    return []
+  } else if (Array.isArray(annotations)) {
+    return annotations as any
+  } else {
+    return [annotations] as any
+  }
+}
+
 /**
  * @category api interface
  * @since 3.10.0
@@ -3803,12 +3827,18 @@ function makeTransformationClass<From extends Schema.Any, To extends Schema.Any,
   return class TransformationClass
     extends make<Schema.Type<To>, Schema.Encoded<From>, Schema.Context<From> | Schema.Context<To> | R>(ast)
   {
-    static override annotations(annotations: Annotations.Schema<Schema.Type<To>>) {
-      return makeTransformationClass<From, To, R>(
-        this.from,
-        this.to,
-        mergeSchemaAnnotations(this.ast, annotations)
-      )
+    static override annotations(annotations: TransformationAnnotations<
+      Schema.Type<To>,
+      transformOrFail<From, To, R>,
+      Schema.Encoded<From>
+    >) {
+      const [typeAnnotations, transformationAnnotations, encodedAnnotations] = getTransformationAnnotations(annotations)
+
+      const from = encodedAnnotations ? this.from.annotations(encodedAnnotations) as any : this.from
+      const to = transformationAnnotations ? this.to.annotations(transformationAnnotations) as any : this.to
+      const ast = typeAnnotations ? mergeSchemaAnnotations(this.ast, typeAnnotations) : this.ast
+
+      return makeTransformationClass<From, To, R>(from, to, ast)
     }
 
     static from = from
@@ -8461,13 +8491,7 @@ type RequiredKeys<T> = {
   [K in keyof T]-?: {} extends Pick<T, K> ? never : K
 }[keyof T]
 
-type ClassAnnotations<Self, A> =
-  | Annotations.Schema<Self>
-  | readonly [
-    Annotations.Schema<Self> | undefined,
-    (Annotations.Schema<Self> | undefined)?,
-    Annotations.Schema<A>?
-  ]
+type ClassAnnotations<Self, A> = TransformationAnnotations<Self, Self, A>
 
 /**
  * @category api interface
@@ -8868,13 +8892,7 @@ const astCache = globalValue("effect/Schema/astCache", () => new WeakMap<any, AS
 const getClassAnnotations = <Self, A>(
   annotations: ClassAnnotations<Self, A> | undefined
 ): [Annotations.Schema<Self>?, Annotations.Schema<Self>?, Annotations.Schema<A>?] => {
-  if (annotations === undefined) {
-    return []
-  } else if (Array.isArray(annotations)) {
-    return annotations as any
-  } else {
-    return [annotations] as any
-  }
+  return getTransformationAnnotations(annotations)
 }
 
 const makeClass = <Fields extends Struct.Fields>(
